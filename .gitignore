@@ -1,0 +1,31 @@
+# --- Restricted survey microdata (GESIS terms: do not redistribute) ---
+data/raw/ZA7575*
+*.dta
+*.sav
+# Any individual-level files derived from the Eurobarometer microdata
+data/processed/data_model*.csv
+data/processed/data_full*.csv
+data_full*.csv
+data_model*.csv
+
+# --- R / RStudio ---
+.Rproj.user/
+.Rhistory
+.RData
+.Rdata
+.Ruserdata
+*.rds
+
+# --- Quarto / R Markdown render output ---
+/.quarto/
+analysis/*.html
+analysis/*_files/
+analysis/*.rmarkdown
+analysis/model_comparison.html
+*.knit.md
+
+# --- OS / editor clutter ---
+.DS_Store
+Thumbs.db
+desktop.ini
+~$*

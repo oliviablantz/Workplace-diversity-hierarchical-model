@@ -1,0 +1,1437 @@
+---
+title: "Models Final"
+format: html
+editor: visual
+---
+
+## Attitudes Towards Roma People Across European Countries - Hierarchical Analysis
+
+### Introduction
+
+This project aims to analyze and understand individual and country level predictors which explain variance in European country attitudes towards Roma People. The used data comes from The European Commission's Special Eurobarometer survey (No. 493), which was conducted in May of 2019 across 29 EU Member States. This survey focused especially on discrimination towards different minority groups within the European Union. The multi-country survey examined public attitudes and revealed substantial cross-national variation in comfort and acceptance towards Roma people across a variety of questions. Understanding these differences, most specifically at a country level, is crucial for informed policy making and the creation of effective EU level anti-discrimination legislation.
+
+For this project, we focus specifically on an dependent variable which is drawn from the following survey question **QC12.1**:
+
+> *"Regardless of whether you are actually working or not, please tell me, using a scale from 1 to 10, how comfortable you would feel, if a colleague at work with whom you are in daily contact, belonged to each of the following groups?*
+>
+> **1) A Roma person**
+>
+> *'1' means that you would feel 'not at all comfortable' and '10' that you would feel 'totally comfortable'.*
+
+We can see that country-level averages on this question range dramatically, from 38% reporting comfort in Italy to 89% in the Netherlands. The presence of these differences suggest that where a person is from can shape their attitudes toward Roma people beyond their individual sociodemographic characteristics.
+
+#### Research Question
+
+We were motivated by the following research question...
+
+*What explains cross-country variation in European attitudes toward working daily with a Roma colleague?*
+
+Given the hierarchical structure of the data we adopted a multilevel analytical framework, leading to multi-level hypothesis. Our hypothesis are guided by the careful EDA of our data and an extensive literature review which is highlighted in our written report.
+
+#### Report Index
+
+We built our analysis in multiple stages:
+
+1.  **Null Model (Model 0):** An empty model with only a random intercept for country, used to calculate the Intraclass Correlation Coefficient (ICC) and establish whether multilevel modeling is justified.
+2.  **Individual-Level Model (Model 1):** A model with individual level predictors to explain within-country variation. Missing data on political self-placement was handled via multiple imputation using predictive mean matching (PMM). All other predictors had observed missingness below 2%, which was handled with list wise deletion.
+3.  **Country-Level Model (Model 2):** A model with country-level predictors to explain the between-country variation that individual level predictors could not account for.
+4.  **Cross-Level Interaction (Model 3):** A model to test whether the effect of individual-level predictors varies depending on country-level context (e.g., Roma population share).
+
+An important note is that non-standard responses to the dependent variable ("indifferent" (2.5%), "it depends" (1.5%), and "don't know" (3.7%)) were excluded from the analysis, as these cannot be defensibly placed on the 1–10 scale. A sensitivity analysis confirmed that country-level estimates are robust to alternative codings of these responses. We estimated multilevel models without weighting, because lmer( ) does not support sampling weights directly, and the random intercept structure already accounts for country-level clustering.
+
+**Libraries**
+
+```{r}
+library(tidyverse)
+library(car)
+library(lme4)
+library(lmerTest)
+library(ggeffects)
+library(magrittr)
+library(broom)
+library(broom.mixed)
+library(foreign)
+library(haven)
+library(mice) 
+library(performance)
+library(patchwork)
+library(psych)
+library(sjmisc)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sjPlot)
+library(here)
+```
+
+### Survey Data
+
+Loading Raw Data...
+
+```{r}
+rawdata <- read_dta(here("data", "raw", "ZA7575.dta"))
+#glimpse(rawdata)
+```
+
+### EDA: Research Related Variables
+
+While focusing on question QC12_1 in particular, this survey asks multiple different questions regarding the perceptions and acceptance of Roma people across different European countries in different aspects of society. Here, we can select and examine relevant questions to help us understand patterns of discrimination against the Roma Population.
+
+```{r}
+roma_vars <- rawdata |> mutate(dependent = qc12_1, #dependent 
+                         dependent_rec = qc12_1r, #dependent recoded
+                         roma_contact = sd1_3, #Roma friends
+                         roma_selfid = sd2_4, #self ID as roma 
+                         perceived_disc = qc1_3, #percieved disc 
+                         exp_disc = qc2_5, #personal exp with roma disc 
+                         hiring_disc = qc4_6, #hiring disadvantage, 
+                         politics_roma = qc6_5, # comfort with politicians being rma
+                         int_efforts = qc8, # roma int efforts effectiveness
+                         childs_partner = qc13_1, #comfort with childs parenter being Roma
+                         schoolmates_roma = qc14, # comfort with roma schoolmates
+                         educ_div_roma = qc17_7, # diveristy in school cirriculm - roma 
+                         benefit_int = qc16_1) #society could benefit from better integration of Roma people
+
+roma_vars |> count(dependent) 
+roma_vars |> count(dependent_rec)
+roma_vars |> count(roma_contact)
+roma_vars |> count(roma_selfid)
+roma_vars |> count(perceived_disc)
+roma_vars |> count(exp_disc)
+roma_vars |> count(hiring_disc)
+roma_vars |> count(politics_roma) 
+roma_vars |> count(int_efforts) 
+roma_vars |> count(childs_partner) 
+roma_vars |> count(schoolmates_roma)
+roma_vars |> count(educ_div_roma)
+roma_vars |> count(benefit_int)
+```
+
+These outcomes have helped inform our hypothesis defense, writing, and overall understanding of the survey responses.
+
+#### Visualizations: Research Related Variables
+
+Here, we can visualize the distributions for these questions relating to Roma people.
+
+We start with our dependent variable.
+
+```{r}
+dependent_plot <- ggplot(roma_vars, aes(x = dependent)) +
+  geom_bar(fill = "deepskyblue4") +
+  labs(title = "Regardless of whether you are actually working or not, how comfortable you would feel, if a colleague at work with whom you are in daily contact, was Roma?", 
+       subtitle = "1 = not comfortable at all, 10 = totally comfortable, 11,12,13 = nonstandard")
+
+dependent_plot
+```
+
+Re-coded Dependent Variable...
+
+```{r}
+dependent_rec_plot <- ggplot(roma_vars, aes(x = dependent_rec)) +
+  geom_bar(fill = "deepskyblue4") +
+  labs(title = "Regardless of whether you are actually working or not, how comfortable you would feel, if a colleague at work with whom you are in daily contact, was Roma?", 
+       subtitle = "1 = ucomfortable, 2 = moderately comfortable, 3 = comfortable, 4,5,6 = nonstandard")
+
+dependent_rec_plot
+```
+
+#### Examining Non-Standard Responses...
+
+Here, we can examine those who responded to our dependent variable with "non-standard responses". These are represented in the data as those who refused to respond on the 1-10 scale, and rather responded with "indifferent", "it depends", or "Don't know/No answer".
+
+It's important to ask ourself... do (and if so, how) do individuals who did not provide scaled 1-10 responses differ? Let's check
+
+Creating variable...
+
+```{r}
+data_dep <- rawdata |>
+  transmute(
+    isocntry = as.character(isocntry),
+    qc12_1 = as.numeric(qc12_1),
+    response_type = case_when(
+      qc12_1 %in% 1:10 ~ "Scale (1-10)",
+      qc12_1 == 11  ~ "Indifferent",
+      qc12_1 == 12  ~ "It depends",
+      qc12_1 == 13 ~ "DK / No answer",
+      TRUE ~ "Other"
+    )
+  )
+```
+
+**Overall Distribution of Response Types...**
+
+```{r}
+
+overall <- data_dep |>
+  count(response_type) |>
+  mutate(pct = round(n / sum(n) * 100, 2)) |>
+  arrange(desc(n))
+
+print(overall)
+```
+
+We see we have less than 10% item missing data. The most observed non-standard response was refusal or don't know. Following, we see 2.5% of the sample being "indifferent", 1.47% as "it depends".
+
+**Comparing Individual Profiles... Indifferent vs Scale Respondents...**
+
+Here, we attempt to see how "indifferent" respondents may systematically different from those who responded with a number 1-10.
+
+```{r}
+profile <- rawdata |>
+  transmute(
+    response_type = case_when(
+      qc12_1 %in% 1:10 ~ "Scale",
+      qc12_1 == 11 ~ "Indifferent",
+      qc12_1 == 12 ~ "It Depends",
+      qc12_1 == 13 ~ "No Response",
+      TRUE ~ "Other"
+    ),
+    age = ifelse(d11 == 99, NA_real_, d11),
+    male = ifelse(d10 == 1, 1, 0),
+    education = case_when(
+      d8 %in% c(0, 1, 98, 99) ~ NA_real_,
+      TRUE ~ as.numeric(d8)
+    ),
+    left_right = case_when(
+      d1 %in% 1:10 ~ as.numeric(d1),
+      TRUE ~ NA_real_
+    ),
+    social_class = ifelse(d63 %in% 1:5, as.numeric(d63), NA_real_),
+    hardship = case_when(
+      d60 == 1 ~ 3,
+      d60 == 2 ~ 2,
+      d60 == 3 ~ 1,
+      TRUE ~ NA_real_
+    ),
+    roma_contact = case_when(
+      sd1_3 == 1 ~ 1,
+      sd1_3 == 2 ~ 0,
+      TRUE ~ NA_real_
+    )
+  ) |>
+  filter(response_type %in% c("Scale", "Indifferent", "It Depends", "No Response")) 
+
+#compare means 
+profile_comparison <- profile |>
+  group_by(response_type) |>
+  summarise(
+    n = n(),
+    mean_age = round(mean(age, na.rm = TRUE), 1),
+    pct_male = round(mean(male, na.rm = TRUE) * 100, 1),
+    mean_education = round(mean(education, na.rm = TRUE), 1),
+    mean_left_right  = round(mean(left_right, na.rm = TRUE), 1),
+    mean_social_class = round(mean(social_class, na.rm = TRUE), 1),
+    mean_hardship    = round(mean(hardship, na.rm = TRUE), 2),
+    pct_roma_contact = round(mean(roma_contact, na.rm = TRUE) * 100, 1)
+  )
+
+print(profile_comparison)
+```
+
+Here we see some interesting findings. Across most metrics, we see those who answered non-standard responses are not systematically different from those who responded on a 1-10 scale. The only notable different we see is that those who refuse to respond have a lower level of contact with Roma people, only 10% compared to other respondent categories being around 20%.
+
+**Scale Respondents... Our "Middle"**
+
+Here, we can examine the mean comfort score and distribution for people who DID answer 1-10.
+
+```{r}
+scale_respondents <- rawdata |>
+ filter(qc12_1 %in% 1:10) |>
+  mutate(comfort = as.numeric(qc12_1))
+
+round(mean(scale_respondents$comfort), 2)
+median(scale_respondents$comfort)
+round(sd(scale_respondents$comfort), 2)
+
+scale_respondents |>
+  count(comfort) |>
+  mutate(pct = round(n / sum(n) * 100, 1)) |>
+  print()
+```
+
+The mean response is 7.27, but the median response is 9. This signals we have a skewed dependent variable, with 50% of the respondents saying 9 or 10, and 44% being 10. The standard deviation is 3.15.
+
+**Indifferent Responses By Country**
+
+```{r}
+dep_by_country <- data_dep |>
+  group_by(isocntry) |>
+  summarise(
+    n_total       = n(),
+    n_scale       = sum(response_type == "Scale (1-10)"),
+    n_indifferent = sum(response_type == "Indifferent"),
+    n_it_depends  = sum(response_type == "It depends"),
+    n_dk          = sum(response_type == "DK / No answer"),
+    pct_indifferent = round(n_indifferent / n_total * 100, 1),
+    pct_it_depends  = round(n_it_depends / n_total * 100, 1),
+    pct_dk          = round(n_dk / n_total * 100, 1),
+    pct_nonstandard = round((n_indifferent + n_it_depends + n_dk) / n_total * 100, 1)
+  ) |>
+  arrange(desc(pct_indifferent))
+
+print(dep_by_country, n = 30)
+```
+
+Here, we can see that the rate of non-standard responses varies across countries (ranging from 2.5% in Belgium to 25.1% in Malta). This suggests that cross-national differences in engagement with the question.
+
+**Non Standard Responses Percentage by Country**
+
+This graph allows us to also visualize these non-standard responses across the countries in our data.
+
+```{r}
+nonstandard_long <- dep_by_country |>
+  select(isocntry, pct_indifferent, pct_it_depends, pct_dk) |>
+  pivot_longer(-isocntry, names_to = "type", values_to = "pct") |>
+  mutate(
+    type = case_when(
+      type == "pct_indifferent" ~ "Indifferent",
+      type == "pct_it_depends"  ~ "It depends",
+      type == "pct_dk"          ~ "DK / No answer"
+    ),
+    isocntry = fct_reorder(isocntry,
+                            pct * (type == "Indifferent"),
+                            .fun = sum)
+  )
+
+p1 <- nonstandard_long |>
+  ggplot(aes(x = pct, y = isocntry, fill = type)) +
+  geom_col() +
+  scale_fill_manual(values = c("Indifferent" = "#4472C4",
+                                "It depends" = "#ED7D31",
+                                "DK / No answer" = "#A71654")) +
+  labs(x = "% of respondents",
+       y = NULL,
+       fill = "Response type",
+       title = "Non-standard Responses to Question of Interest by Country",
+       subtitle = "Indifferent, It depends, and DK/No answer") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+print(p1)
+```
+
+We can visually see that certain countries have a much higher rate of non-response. This suggests national differences in engagement with the question.
+
+**Coding Decision: Sensitivity Analysis**
+
+Here, we will see what happens to our country means under different "re-codings" of our dependent variable. We cannot impute the dependent variable, but we can see how our means would technically change.
+
+```{r}
+sensitivity <- rawdata |>
+  transmute(
+    isocntry = as.character(isocntry),
+    qc12_1 = as.numeric(qc12_1),
+    # drop indifferent (NA)
+    comfort_drop = ifelse(qc12_1 %in% 1:10, qc12_1, NA_real_),
+    # indifferent = 5 (midpoint)
+    comfort_mid5 = case_when(
+      qc12_1 %in% 1:10 ~ as.numeric(qc12_1),
+      qc12_1 == 11      ~ 5,
+      TRUE               ~ NA_real_
+    )         
+  ) |>        
+  group_by(isocntry) |>
+  summarise(
+    mean_drop = round(mean(comfort_drop, na.rm = TRUE), 2),
+    mean_mid5 = round(mean(comfort_mid5, na.rm = TRUE), 2),
+    diff_5_vs_drop = round(mean_mid5 - mean_drop, 3),
+  ) |>
+  arrange(desc(abs(diff_5_vs_drop)))   
+
+
+print(sensitivity, n = 30)
+max(abs(sensitivity$diff_5_vs_drop))
+```
+
+Here, we compare the ranking of country means from the full sample (recoding 'indifferent' responses to the scale midpoint of 5) with the ranking from the restricted sample (excluding all non-standard responses). We can see that the country rankings are stable across both specifications, which indicates to us that exclusion of these respondents will not distort cross-national patterns.
+
+#### Other Variables...
+
+Here, we return to examine other variables relating to Roma people, to help inform our survey analysis or get a feel of survey trends in questions regarding Roma people. These are standard bar charts to observe counts and distributions of responses.
+
+***Prevalence of Respondents with Roma Friends***
+
+```{r}
+roma_contact_plot <- ggplot(roma_vars, aes(x = roma_contact)) +
+  geom_bar(fill = "deepskyblue4") +
+  labs(title = "Do you have friends or acquaintances who are Roma?", 
+       subtitle = "Reported having a Roma Friend = 1, No = 2")
+
+roma_contact_plot
+```
+
+***Roma Population in Survey Respondents (Self Identified)***
+
+```{r}
+roma_selfID_plot <- ggplot(roma_vars, aes(x = roma_selfid)) +
+  geom_bar(fill = "deepskyblue4") +
+  labs(title = "Do you identify as the following minority group, Roma?", 
+       subtitle = "Not Roma = 0, Roma = 1")
+
+roma_selfID_plot
+```
+
+***Perceived Discrimination Against Roma People***
+
+```{r}
+percieved_disc_plot <- ggplot(roma_vars, aes(x = qc1_3)) +
+  geom_bar(fill = "deepskyblue4") +
+  labs(title = "Is Roma discrimination widespread in (OUR COUNTRY)?", 
+       subtitle = "1 = very wide spread, 5 = non-existent")
+
+percieved_disc_plot
+
+```
+
+***Perceived Hiring Disadvantages of Roma People***
+
+```{r}
+empl_disadv_plot <- ggplot(roma_vars, aes(x = qc4_6)) +
+  geom_bar(fill = "deepskyblue4") +
+  labs(title = "Does being Roma put a candiate at a disadvantage for employment?", 
+       subtitle = "0 = No, 1 = Yes")
+
+empl_disadv_plot
+
+```
+
+***Comfort with Roma Politicians***
+
+```{r}
+roma_pol_plot <- ggplot(roma_vars, aes(x = qc6_5)) +
+  geom_bar(fill = "deepskyblue4") +
+  labs(title = "How comfortable would you be with a Roma person elected to the highest position of office?", 
+       subtitle = "1 = Not, 10 = Totally Comfortable")
+
+roma_pol_plot
+```
+
+***Perceived Effectiveness of Roma Integration Efforts***
+
+```{r}
+int_eff_plot <- ggplot(roma_vars, aes(x = qc8)) +
+  geom_bar(fill = "deepskyblue4") +
+  labs(title = "How effective have integration efforts in (COUNTRY) been of Roma people?", 
+       subtitle = "1 = not effective, 10 = very effective, 11 = No efforts made, 12 = DK")
+
+int_eff_plot
+
+```
+
+***Comfort with Child's Partner being Roma***
+
+```{r}
+childs_partner_plot <- ggplot(roma_vars, aes(x = qc13_1)) +
+  geom_bar(fill = "deepskyblue4") +
+  labs(title = "Ho comfortable would you be with your child's partner being Roma?", 
+       subtitle = "1 = Not comfortable, 10 = totally comfortable, 11 = indifferent, 12 = it depends, 13 = Dk")
+
+childs_partner_plot
+```
+
+***Perceived Acceptance of Roma Children in Schools***
+
+```{r}
+schoolmate_plot <- ggplot(roma_vars, aes(x = qc14)) +
+  geom_bar(fill = "deepskyblue4") +
+  labs(title = "In you ropinion, how comfortabel are parents with their children having Roma classmates?", 
+       subtitle = "1 = not at all comfortable, 10 = totally comfortable")
+
+schoolmate_plot
+
+```
+
+***Opinions of Societal Benefits of Better Roma Integration***
+
+```{r}
+society_benefit_plot <- ggplot(roma_vars, aes(x = qc16_1)) +
+  geom_bar(fill = "deepskyblue4") +
+  labs(title = "Would society benefit from better integreation of Roma people?", 
+       subtitle = "1 = Totally agree, 4 = totally disagree, 5 = DK")
+
+society_benefit_plot
+```
+
+***Opinions on Teaching Roma Culture in Schools***
+
+```{r}
+roma_curriculum_plot <- ggplot(roma_vars, aes(x = qc17_7)) +
+  geom_bar(fill = "deepskyblue4") +
+  labs(title = "Schools should teach more about Roma history and culture", 
+       subtitle = "1 = Totally agree, 4 = totally disagree")
+
+roma_curriculum_plot
+```
+
+These all show the general and overall distribution of individuals to questions regarding Roma people, and while we see that on the individual level distributions trend towards positive attitudes, we know that the same trends do not hold true across certain questions, and more importantly across different countries.
+
+### EDA: Sociodemographic Data
+
+Based on our literature review and hypothesis, we have chosen the following variables to include in our individual level model explaining variance in comfort towards Roma people in the workplace.
+
+-   `isocntry` - country (included for our null model and model 1 as control to test for country level variance)
+-   `d11` — age (continuous)
+-   `d10` — Gender (1 = male, 2 = female)
+-   `d8r1` — Education (age left full-time education, re factored into pre-high school, high school completion, university, still studying, and no full time education)
+-   `d25` — rural, small/mid town, large town residence.
+-   `d60` — difficulty paying bills (economic hardship proxy)
+    -   chosen over social class self identification for the directness/clarity of question and the much lower non-response rate than social class
+-   `d1` — left-right political self-placement (1–10)
+-   `sd1_3` = having Roma friends
+
+Here, we load them all into a dataframe.
+
+```{r}
+sociodem_vars <- rawdata |> 
+  mutate(age = d11,
+         gender = d10,
+         education = d8r2,
+         urban = d25,
+         econ_hardship = d60, 
+         politics = d1, 
+         isocntry, 
+         roma_contact = sd1_3)
+
+summary(sociodem_vars$age)
+sociodem_vars |> count(gender)
+sociodem_vars |> count(education)
+sociodem_vars |> count(urban)
+sociodem_vars |> count(econ_hardship)
+rawdata |> count(d1) |> print(n = 20)
+```
+
+Our brief interpretation notes...
+
+-   `Age`: min 11, median 53, mean 51.56, max 98.
+
+-   `Gender`: 12492 men, 14946 women
+
+-   `Education`: no full time education (250 observations), still studying (1676 observations), refusal = 64, and DK = 323. Our most observed category is the "high-school" equivalent.
+
+-   `Urban`: rural (8776 observations) small/mid (10,767 observations), large (7881 observations), DK (14 observations)
+
+-   `Economic Hardship`: most of the time (2054), from time to time (6528), almost never (18467), refusal (379)
+
+-   `politics`: 1914 refused to answer, and 2,775 said "don't know". These values must be imputed to avoid dropping a large number of observations with list wise deletion.
+
+-   `iscocntry` = highest number of respondents in BE (1002) lowest in MT (371)... we also have 29 countries (including both East and West Germany)
+
+#### Visualizations : Sociodemographic Variables
+
+Here, we can better visualize some of our distributions
+
+***AGE***
+
+```{r}
+age_plot <- ggplot(sociodem_vars, aes(d11)) +
+  geom_histogram(binwidth = 1,   color = "deepskyblue4", fill = "skyblue") +
+  ggtitle("Distribution of the Age variable") +
+  theme_classic() +
+  theme(plot.title = element_text(size = 18))
+
+age_plot
+```
+
+***Gender***
+
+```{r}
+gender_plot <- ggplot(sociodem_vars, aes(x = d10)) +
+  geom_bar(fill = "deepskyblue4") +
+  labs(title = "Distribution of Gender Count", 
+       subtitle = "Male = 1, Female = 2")
+
+gender_plot
+```
+
+***Education (refactored)***
+
+```{r}
+edu_plot <- ggplot(sociodem_vars, aes(d8r2)) +
+  geom_histogram(binwidth = 1,   color = "deepskyblue4", fill = "skyblue") +
+  ggtitle("Distribution of the Education variable ") +
+  theme_classic() +
+  theme(plot.title = element_text(size = 18))
+
+edu_plot
+
+```
+
+Note: Here, category 4 refers to those still studying, and 5 is those with no full-time education.
+
+Urban
+
+```{r}
+urban_plot <- ggplot(sociodem_vars, aes(x = d25)) +
+  geom_bar(fill = "deepskyblue4") +
+  labs(title = "Distribution of Urbanization Level")
+
+urban_plot
+
+```
+
+***Difficulty Paying Bills***
+
+We use this questions as a a proxy for economic hardship. This is because it is less ambiguous than social class, provides a clear time frame for respondents, and acknowledges the financial stress that can permeate across social barriers.
+
+```{r}
+bills_plot <- ggplot(sociodem_vars, aes(x = d60)) +
+  geom_bar(fill = "deepskyblue4") +
+  labs(title = "During the last twelve months, would you say you had difficulties to pay your bills at the end of the month...?",
+       subtitle = "1 = most of the time, 2 = from time to time, 3 = almost never")
+
+bills_plot
+
+```
+
+Political Spectrum
+
+```{r}
+politics_plot <- ggplot(sociodem_vars, aes(x = d1)) +
+  geom_bar(fill = "deepskyblue4") +
+  labs(title = "Distribution of Political Ideologies")
+
+politics_plot
+```
+
+The lump of observations on the far right demonstrate the necessity to impute these values with MICE in an effort to preserve data robustness.
+
+## Data frame Preparation
+
+Here, we collect all of our sociodemographic variables for Model 1 into a data frame. These include the sociodemographic variables we just explored which are supported based on our literature review...
+
+-   `isocntry` - country
+-   `roma_comfort` - dependent variable
+-   `d11` — age
+-   `d10` — gender
+-   `d8r2` — Years of education (re factored).
+-   `d25` — rural, small/mid town, large town residence
+-   `d60` — difficulty paying bills (economic hardship proxy)
+-   `d1` — left-right self-placement (1–10)
+-   `sd1_3` = having Roma friends
+
+Here, we also drop the non-standard observations for our dependent variable. It would be incorrect here to impute the target, as it would be fabricating the responses we are trying to explain. We are supported by many literature pieces related to MICE in our decision (van Buuren, 2018; Rubin, 1987). While we did observe different patterns of non-standard responses that varied by country, when the effect of dropping these observations, we saw that our cross-national patterns did not change substantially.
+
+```{r}
+data_1 <- rawdata |>
+  transmute(
+    isocntry = as.factor(isocntry),
+    # target: set non-standard responses to NA
+    roma_comfort = ifelse(qc12_1 %in% 1:10, as.numeric(qc12_1), NA_real_),
+    age = ifelse(d11 > 98, NA_real_, as.numeric(d11)),
+    female = ifelse(d10 == 2, 1, 0),
+    # edu_cat: set "16-19" as reference
+    edu_cat = case_when(
+      as.numeric(d8r2) == 1 ~ "1: Up to 15",
+      as.numeric(d8r2) == 2 ~ "2: 16-19",
+      as.numeric(d8r2) == 3 ~ "3: 20+",
+      as.numeric(d8r2) == 4 ~ "4: Still studying",
+      as.numeric(d8r2) == 5 ~ "5: No full-time",
+      TRUE       ~ NA_character_
+    ) |> fct_relevel("2: 16-19"),
+    # economics: make "never" reference
+    hardship = case_when(
+      d60 == 1 ~ "3: Most of the time",
+      d60 == 2 ~ "2: From time to time",
+      d60 == 3 ~ "1: Almost never/never",
+      TRUE     ~ NA_character_
+    ) |> fct_relevel("1: Almost never/never"),
+    # politics:  nonstandard to NA for imputation
+    politics = ifelse(d1 %in% 1:10, as.numeric(d1), NA_real_),
+    urbanization = case_when(
+      d25 == 1 ~ "Rural",
+      d25 == 2 ~ "Small/Mid Town",
+      d25 == 3 ~ "Large Town",
+      TRUE     ~ NA_character_
+    ) |> fct_relevel("Rural"),
+    #roma contact
+    roma_contact = case_when(
+      sd1_3 == 1 ~ 1,
+      sd1_3 == 2 ~ 0,
+      TRUE ~ NA_real_
+    )
+  ) |>
+  # drop missing DV cases
+  filter(!is.na(roma_comfort)) |>
+  # CHECK: only relevant columns
+  select(isocntry, roma_comfort, age, female, edu_cat, hardship, politics, urbanization, roma_contact)
+
+data_1 <- as_tibble(data_1)
+psych::describe(data_1)
+```
+
+#### Loading and Merging Country-Level Data
+
+Here, we load our country-level indicators and merge them with the individual data before any modeling or imputation, so that all models use the same unified data set.
+
+```{r}
+# Load country-level indicators
+country_data <- read_csv(here("data", "processed", "Country_indicators_tb.csv"))
+```
+
+Here, we define our country level variables, and we will deal with East and West Germany after.
+
+```{r}
+# Build country vars, excluding all Germany rows (handled manually below)
+country_vars <- country_data |>
+  filter(!is.na(Post_communist),
+         !Country_code %in% c("DE", "DE-W", "DE-E")) |>
+  transmute(
+    isocntry = Country_code,
+    post_communist = as.factor(Post_communist),
+    gdp_per_capita = GDP_per_capita,
+    roma_pct = Roma_prct_pop,
+    gini = Gini_coef
+  )
+
+```
+
+#### Germany Complications
+
+First, we want to input a separate GDP and Gini Coefficient value for East and West Germany. Both of these variables are supported by literature review, and the GDP value is derived directly from Euro stat.
+
+```{r}
+# Separate East/West Germany GDP from regional Eurostat data
+gdp_pc_germany <- read.csv(here("data", "raw", "germany_gdp_per_Capita.csv")) |>
+  select(geo, OBS_VALUE) |>
+  mutate(
+    region = case_when(
+      geo %in% c("Berlin", "Brandenburg", "Mecklenburg-Vorpommern",
+                 "Sachsen", "Sachsen-Anhalt", "Thüringen") ~ "DE-E",
+      TRUE ~ "DE-W"
+    )
+  ) |>
+  group_by(region) |>
+  summarise(GDP_per_capita = round(mean(OBS_VALUE), 1)) |>
+  rename(geo = region)
+
+# National values for variables without regional breakdowns
+de_national <- country_data |> filter(Country_code == "DE")
+
+# Add East and West Germany with regional GDP, regional Gini, national Roma %
+country_vars <- country_vars |>
+  bind_rows(
+    tibble(isocntry = "DE-W",
+           post_communist = as.factor(0),
+           gdp_per_capita = gdp_pc_germany |> filter(geo == "DE-W") |> pull(GDP_per_capita),
+           roma_pct = de_national$Roma_prct_pop,
+           gini = 29.04),
+    tibble(isocntry = "DE-E",
+           post_communist = as.factor(1),
+           gdp_per_capita = gdp_pc_germany |> filter(geo == "DE-E") |> pull(GDP_per_capita),
+           roma_pct = de_national$Roma_prct_pop,
+           gini = 24.16)
+  )
+
+# Verify: one row per country, no duplicates
+stopifnot(nrow(country_vars) == n_distinct(country_vars$isocntry))
+
+```
+
+Now we merge our country level with our individual level data, and standardize our continuous variables for our country level predictors.
+
+```{r}
+# Merge into individual data
+data_full <- data_1 |>
+  left_join(country_vars, by = "isocntry")
+
+# Standardize continuous country-level variables
+data_full <- data_full |>
+  mutate(
+    gdp_per_capita_z = as.numeric(scale(gdp_per_capita)),
+    roma_pct_z = as.numeric(scale(roma_pct)),
+    gini_z = as.numeric(scale(gini))
+  )
+```
+
+Now, we can proceed with our first model.
+
+## Null Model
+
+**Coding Our Null Model**
+
+Here, we write the initial code for our "empty" model.
+
+```{r}
+null_model <- lmer(roma_comfort ~ 1 + (1 | isocntry),
+                   data = data_full,
+                   REML = TRUE)
+
+summary(null_model)
+(null_res <- tidy(null_model))
+```
+
+In our null model, we see a fixed intercept of nearly 7.26. This represents the grand mean of our dependent variable across all 29 country observations. Essentially, the average European respondent would rate themselves a 7.26 on the 1-10 scale (decimal points permitted). Our p-value is statistically significant.
+
+Our variance estimates for the null model explain where our response variance comes from, either from country level variance of from individual level variance. Our country level variance is 1.139, and our residual variance is 8.763. This means is most of the variation in attitudes is occurring within countries, and not between them. However, we still see come country level variance, and we need to check our ICC to test for the use of hierarchical analysis to explain response variance.
+
+#### **ICC - Null Model**
+
+Here, we examine our Intraclass Correlation Coefficient for our null model.
+
+```{r}
+icc_null <- performance::icc(null_model)
+print(icc_null)
+```
+
+Our ICC (intraclass correlation coefficient) is 11.5%. This is more than double 5%, which justifies hierarchical analysis to explain variance. This means that 11.5% of the total variation in our responses is attributed to country level differences, and not individual differences between people.
+
+#### **ANOVA Test for Multi-Level Structure...**
+
+Here, we can use an ANOVA test to compare our empty model and a single-level model that does not control for country. If we observe a p-value larger than 0.05, we can defend that country-level clustering is significant, and that the difference between these models is not due to chance.
+
+```{r}
+null_model_sl <- lm(roma_comfort ~ 1, data = data_full)
+
+anova(null_model, null_model_sl)
+```
+
+We see that our chi-squared is 2947.9, with 1 degree of freedom and a significant p-value of \<2.2e-16. Our AIC and BIC also drop significantly with our null model, and the LogLik shows a large improvement from -65k to -63k. Essentially, this test has confirmed that country membership matters for Roma comfort attitudes and supports the building of our second model.
+
+**Inspect Countries Random Effects...**
+
+This will show us each country's deviation from our overall respondent mean of 7.26, and will show the most and least accepting countries.
+
+```{r}
+country_effects <- ranef(null_model)$isocntry |>
+  as_tibble(rownames = "country") |>
+  rename(u_j = `(Intercept)`) |>
+  arrange(desc(u_j))
+
+# grand mean (fixed intercept)
+(grand_mean <- tidy(null_model) |>
+    filter(effect == "fixed") |>
+    pull(estimate))
+
+# each country's estimated mean comfort
+country_effects <- country_effects |>
+  mutate(estimated_mean = grand_mean + u_j)
+
+print(country_effects, n = 29)
+```
+
+We see the Netherlands, Great Britain, and Sweden near the top of the list, all with 9 or higher. We can observe a partial trend that countries with higher acceptance in general appear to be wealthy, northwestern European liberal democracies. We also see Spain is higher than might have been expected. Towards the bottom, we see countries like Italy, East Germany, Lithuania, and Bulgaria. Maybe these trends are due to historical tensions or political contexts, which could also be supported by East Germany interestingly sitting 2.38 points lower than West Germany.
+
+### Null Model Visualizations
+
+Here, we can use a horizontal barchart which shows our average acceptances across countries...
+
+```{r}
+ggplot(country_effects, aes(x = reorder(country, estimated_mean), 
+                             y = estimated_mean)) +
+  geom_col(aes(fill = estimated_mean), width = 0.7) +
+  # red (low comfort) to blue (high comfort)
+  scale_fill_gradient(low = "#d73027", high = "#4575b4",
+                      name = "Estimated\nMean") +
+  # grand mean reference line
+  geom_hline(yintercept = grand_mean, 
+             linetype = "dashed", 
+             color = "black", 
+             linewidth = 0.5) +
+  # label the grand mean line
+  annotate("text", x = 2, y = grand_mean + 0.15, 
+           label = paste0("Grand mean: ", round(grand_mean, 2)),
+           size = 3, color = "black") +
+  # mean text labels on bars
+  geom_text(aes(label = round(estimated_mean, 1)),
+            hjust = -0.2, size = 3) +
+  coord_flip(ylim = c(0, 10.5)) +
+  labs(
+    title = "Estimated Mean Comfort with a Roma Colleague by Country",
+    subtitle = "Null multilevel model random effects (1 = not at all comfortable, 10 = totally comfortable)",
+    x = NULL,
+    y = "Estimated Mean Comfort Score",
+    caption = "Source: Special Eurobarometer 493 (2019). N = 25,334."
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    plot.subtitle = element_text(size = 9, color = "grey40"),
+    plot.caption = element_text(size = 8, color = "grey50"),
+    legend.position = "none",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+```
+
+And here, we see a map showing average acceptances across different countries built with the rnaturalearth package. It's important to note that this uses West Germany for our general Germany value.
+
+```{r}
+# load europe
+europe_map <- ne_countries(scale = "medium", 
+                            continent = "europe", 
+                            returnclass = "sf")
+# check country codes in map data
+europe_map |>
+  st_drop_geometry() |>
+  select(iso_a2, name) |>
+  as.data.frame() |>
+  print()
+# prepare data 
+map_data <- country_effects |>
+  mutate(country = case_when(
+    country == "DE-E" ~ NA_character_,  # drop east germany...
+    country == "DE-W" ~ "DE",           # use DE for Germany
+    TRUE ~ country
+  )) |>
+  filter(!is.na(country)) |>
+  group_by(country) |>
+  summarise(estimated_mean = mean(estimated_mean)) |>
+  ungroup()
+
+# join map geometry with data
+europe_plot <- europe_map |>
+  # fix france here
+  mutate(iso_a2 = case_when(
+    name == "France" ~ "FR",
+    name == "Norway" ~ "NO",
+    name == "Kosovo" ~ "XK",
+    TRUE ~ iso_a2
+  )) |>
+  left_join(map_data, by = c("iso_a2" = "country"))
+
+# check estimated_mean values
+europe_plot |>
+  st_drop_geometry() |>
+  select(name, iso_a2, estimated_mean) |>
+  as.data.frame() |>
+  filter(!is.na(estimated_mean)) |>
+  print()
+# plot 
+ggplot(europe_plot) +
+  geom_sf(aes(fill = estimated_mean), color = "white", linewidth = 0.3) +
+  scale_fill_gradient2(
+    low = "#d73027",
+    mid = "#ffffbf",
+    high = "#4575b4",
+    midpoint = grand_mean,
+    name = "Estimated\nMean\nComfort",
+    na.value = "grey85",
+    limits = c(4, 10)
+  ) +
+  coord_sf(xlim = c(-25, 45), ylim = c(34, 72), expand = FALSE) +
+  labs(
+    title = "Comfort with a Roma Colleague Across EU Member States",
+    subtitle = "Estimated country means from null multilevel model (1–10 scale)",
+    caption = "Source: Special Eurobarometer 493 (2019). Grey = not in survey."
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(face = "bold", size = 12, hjust = 0.5),
+    plot.subtitle = element_text(size = 9, color = "grey40", hjust = 0.5),
+    plot.caption = element_text(size = 8, color = "grey50", hjust = 0.5),
+    legend.position = "right"
+  )
+```
+
+## Model 1: Individual Level Predictors
+
+Now, we will build a model that tries to explain variance between individuals in our target variable responses. Because we have already built our data frame, our next step it to check our data and see if imputation is necessary. We should consider imputing for any predictor that have missing data which is greater than 5% of the total observations.
+
+```{r}
+data_full |>
+  summarise(across(everything(), ~sum(is.na(.)))) |>
+  pivot_longer(everything(), names_to = "variable", values_to = "n_missing") |>
+  mutate(pct_missing = round(n_missing / nrow(data_full) * 100, 2)) |>
+  arrange(desc(pct_missing))
+```
+
+Political self-placement had the highest rate of item non-response (16.2%), consistent with the sensitivity of this question in cross-national surveys. We will therefore impute these missing variables with predictive mean matching, across 10 multiply imputed data sets. We can see that all other individual-level predictors have missingness below 2%, and there they and handled via list wise deletion, which is defensible in this case.
+
+#### Examining Missing Data
+
+Here, we use MICE to impute for missing observations in the "politics" variable. We will use the method of predictive mean matching. We defend this choice as this method will preserve the whole number integers of the scale for our imputed observations, make fewer distributional assumptions about the variable, and it is the standard recommendation for variables with ordinal scales (Buuren, 2018). This is also defensible considering the relative normal distribution of the variable when excluding these observations.
+
+It must be acknowledged that the missing values in our politics variable is not Missing at Random. In other words, people may be refusing to answer because of where they actually fall on the political scale. However, PMM doesn't assume normality or randomness of missing data, rather it draws from real observations in our data (people with similar profiles "inspire" the imputed responses).
+
+We can also partially test what other variables predict missing unit observations in our political variable, using a logistic regression of the non-response indicator for political placement.
+
+```{r}
+data_full$politics_missing <- ifelse(is.na(data_full$politics), 1, 0)
+
+missing_model <- glm(politics_missing ~ age + female + edu_cat + 
+                      hardship + urbanization + roma_contact,
+                     data = data_full, family = binomial)
+summary(missing_model)
+```
+
+We see that almost every other predictor in the model significantly explains who is refusing to answer the question. This includes people with less education, women, older people, people facing economic hardship, rural residents, and people with Roma contacts.
+
+The observed covariates can help significantly predict who has a "missing" value for politics. This is a sort of evidence that the missing values are conditioned on other observed values, which is what the MAR assumption requires.
+
+We can also visualize the differences of political non-response cross educational categories.
+
+```{r}
+# Visualize non-response rates by education
+data_full |>
+  mutate(politics_missing = ifelse(is.na(politics), 1, 0)) |>
+  group_by(edu_cat) |>
+  summarise(pct_missing = mean(politics_missing) * 100) |>
+  ggplot(aes(x = edu_cat, y = pct_missing)) +
+  geom_col(fill = "deepskyblue4") +
+  labs(title = "Political Non-Response Rate by Education Level",
+       y = "% Missing", x = NULL) +
+  theme_minimal()
+```
+
+```{r}
+#droping this new variable from the data 
+data_full$politics_missing <- NULL
+```
+
+#### Imputing Politics with MICE.
+
+Here, we define our PMM method for the politics variable, as well as imputing 10 data sets. This single imputation runs on the full merged data set so that country-level variables are available in all imputed data sets for Models 1, 2, and 3.
+
+```{r}
+init <- mice(data_full, maxit = 0)
+meth <- init$method
+pred <- init$predictorMatrix
+
+meth[names(meth)] <- ""
+meth["politics"]  <- "pmm"
+
+pred[, "isocntry"] <- 0
+pred["isocntry", ] <- 0
+
+set.seed(123)
+imputed_data <- mice(data_full,
+                      method = meth,
+                      predictorMatrix = pred,
+                      m = 10,
+                      maxit = 20,
+                      printFlag = FALSE)
+```
+
+Imputation Diagnostics...
+
+Now that we have our imputed data sets, before pooling, we can verify the new distribution of our variable with the imputed values.
+
+```{r}
+densityplot(imputed_data, ~ politics, 
+            main = "Observed vs Imputed: Political Orientation")
+
+```
+
+The blue line represents our actual distribution before imputation, and the red lines represent the new data's distribution after using imputation for missing values. We can see that the distribution mirrors the true values.
+
+MODEL 1
+
+Here, we run the model with our imputed data, and pool the results to get our "average".
+
+```{r}
+# multilevel model across all 10 imputed datasets
+m1_results <- with(imputed_data, 
+                   lmer(roma_comfort ~ age + female + edu_cat + politics + 
+                        urbanization + hardship + roma_contact + 
+                        (1 | isocntry)))
+
+# pool and view results
+pooled_m1 <- pool(m1_results)
+summary(pooled_m1, conf.int = TRUE)
+```
+
+Now, we can interpret our results...
+
+-   **Roma Contact**: Having Roma friends or acquaintances has as positive effect (+1.39). This is our strongest individual predictor. It suggests that personal contact is the primary driver of comfort.
+
+-   **Education:** Compared to the reference group (16–19 years old), those who studied until 20+ are significantly more comfortable with the idea of Roma colleagues (+0.45). Conversely, those who left school before 15 are less comfortable (-0.18). Still studying also has positive effect (+0.26). No full-time education shows a negative relationship (-0.45). However, it's important to note the wide confidence interval (between -0.85 and -0.05) due to the small sample size (210 people).
+
+-   **Economic Hardship:** Compared to those who "never" have trouble paying bills, those with hardship **"**most of the time**"** are less comfortable (-0.37), and "from time to time " (-0.43). Notably, hardship "some of the time" is associated with slightly more negative attitudes than hardship "most of the time". However, the difference is small and the confidence intervals overlap heavily.
+
+-   **Politics:** For every 1-point move to the right on the political scale, comfort decreases by -0.12. This means that the far-left to far-right gap is about 1.08 points.
+
+-   **Gender:** Women are slightly more comfortable than men (+0.17)
+
+-   **Urbanization**: With rural as the reference category, we see that large town residents are significantly more comfortable (+0.26), and small / mid town residents are also more comfortable with a slightly smaller effect (+0.19).
+
+-   Age = Every year increase in age shows a minuscule negative effect on comfort levels, being -0.014.
+
+When it comes to our individual versus our country effects, we see that residual variance is much larger than the country variance. This means that while being a resident of a specific country matters, the differences between individuals as explained in this model can explain the majority of the variation in the data.
+
+Here, we can see our confidence intervals with our predictive data of the effects of some of our indicators: Roma contact, politics, and education level.
+
+```{r}
+pred_data <- ggpredict(m1_results$analyses[[1]], "roma_contact")
+
+ggplot(pred_data, aes(x = factor(x, labels = c("No", "Yes")), y = predicted)) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.1) +
+  labs(title = "Predicted Comfort Level by Personal Contact with Roma",
+       y = "Comfort Scale (1-10)", 
+       x = "Has Roma Friends/Acquaintances") +
+  theme_minimal()
+
+# by education category
+plot(ggpredict(m1_results$analyses[[1]], "edu_cat")) +
+  labs(title = "Predicted Comfort by Education Level",
+       y = "Comfort Scale (1-10)")
+
+# by politics
+plot(ggpredict(m1_results$analyses[[1]], "politics")) +
+  labs(title = "Predicted Comfort by Political Orientation",
+       y = "Comfort Scale (1-10)", 
+       x = "Left (1) — Right (10)")
+```
+
+#### ICC Score - Individual Level Model
+
+Finally, we should examine the ICC score for the individual level predictor model to further support our hierarchical analysis.
+
+```{r}
+# ICC for Model 1 - we take ICC from each of the 10 imputed models and average
+m1_iccs <- sapply(m1_results$analyses, function(x) {
+  icc_obj <- performance::icc(x)
+  return(as.numeric(icc_obj[[1]]))
+})
+avg_icc_m1 <- mean(m1_iccs)
+round(avg_icc_m1, 4)
+round(as.numeric(icc_null[[1]]), 4)
+#percent change calculation
+round((as.numeric(icc_null[[1]]) - avg_icc_m1) / as.numeric(icc_null[[1]]) * 100, 1)
+```
+
+We see that the average ICC from model 1 is 11.2% compared to the null models ICC of 11.5%. This leaves us with only a 2.3% change. Essentially, this means that after controlling for all the individual level predictors included in the model, the proportion of variance which we can attribute to country level differences has barely changed. 11.2% of people's comfort level is due to country they live in, even after controlling for individual factors.
+
+The between-country differences in comfort with Roma colleagues are therefore not explained by the fact that countries have different demographic compositions.This justifies using a second hierarchical model to explain this persistent variance. It is likely that predictors at the country level, such as institutions, history, culture, or national economic indicators have an effect on these differences across individuals which otherwise appear similar.
+
+Here, we can see the output of both our null model and our level 1 predictor model side by side.
+
+```{r}
+# Use model from first imputation (representative)
+tab_model(null_model, m1_results$analyses[[1]],
+          show.icc = TRUE,
+          show.re.var = TRUE,
+          show.ngroups = TRUE,
+          dv.labels = c("Null Model", "Model 1: Individual"),
+          title = "Multilevel Models: Comfort with Roma Colleague")
+```
+
+## Model 2: Country Level Indicators
+
+Here, we introduce country-level indicators to explain this persistent between-country variance.
+
+#### EDA: Country-Level Relationships
+
+Before modeling, we visualize the relationships between our country-level predictors and the mean comfort scores.
+
+```{r}
+# calculate country-level mean comfort for plotting
+country_means <- data_full |>
+  group_by(isocntry, post_communist, gdp_per_capita, roma_pct, gini) |>
+  summarise(mean_comfort = mean(roma_comfort, na.rm = TRUE),
+            n = n()) |> ungroup()
+```
+
+***Comfort vs GSP***
+
+```{r}
+# GDP per capita vs comfort
+p_gdp <- ggplot(country_means, aes(x = gdp_per_capita, y = mean_comfort, 
+                                     color = post_communist)) +
+  geom_point(aes(size = n)) +
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed", color = "grey50") +
+  labs(title = "GDP per Capita and Mean Roma Comfort",
+       x = "GDP per Capita (EUR)", y = "Mean Comfort (1-10)",
+       color = "Post-Communist", size = "Respondents") +
+  theme_minimal()
+print(p_gdp)
+```
+
+***Roma Population vs Comfort***
+
+```{r}
+# Roma population share vs comfort
+p_roma <- ggplot(country_means, aes(x = roma_pct, y = mean_comfort,
+                                      color = post_communist)) +
+  geom_point(aes(size = n)) +
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed", color = "grey50") +
+  labs(title = "Roma Population Share and Mean Roma Comfort",
+       x = "Roma % of Population", y = "Mean Comfort (1-10)",
+       color = "Post-Communist", size = "Respondents") +
+  theme_minimal()
+
+print(p_roma)
+```
+
+***Gini Coeff vs Comfort***
+
+```{r}
+# Gini vs comfort
+p_gini <- ggplot(country_means, aes(x = gini, y = mean_comfort,
+                                      color = post_communist)) +
+  geom_point(aes(size = n)) +
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed", color = "grey50") +
+  labs(title = "Income Inequality (Gini) and Mean Roma Comfort",
+       x = "Gini Coefficient", y = "Mean Comfort (1-10)",
+       color = "Post-Communist", size = "Respondents") +
+  theme_minimal()
+print(p_gini)
+
+```
+
+***Post-Communist vs Comfort***
+
+```{r}
+# Post-communist boxplot
+p_postcom <- ggplot(country_means, aes(x = post_communist, y = mean_comfort)) +
+  geom_boxplot() +
+  geom_point() +
+  labs(title = "Post-Communist Legacy and Mean Roma Comfort",
+       x = "Post-Communist Country", y = "Mean Comfort (1-10)") +
+  theme_minimal()
+print(p_postcom)
+```
+
+#### Adding Country-Level Predictors
+
+Now, we run model 2 across all 10 imputed data sets, with our level 1 and level 2 country predictors.
+
+```{r}
+# Run Model 2 across all 10 imputed datasets
+m2_results <- with(imputed_data,
+                   lmer(roma_comfort ~ 
+                          # Level 1: individual predictors
+                          age + female + edu_cat + politics +
+                          urbanization + hardship + roma_contact +
+                          # Level 2: country predictors (standardized)
+                          post_communist + gdp_per_capita_z + roma_pct_z + gini_z +
+                          (1 | isocntry)))
+
+# Pool results
+pooled_m2 <- pool(m2_results)
+summary(pooled_m2, conf.int = TRUE)
+```
+
+We see that for Model 2, the signficance and influence of the individual level predictors has not changed. As for the country-level predictors, our post-communist variable is barely non-significant. We also see that GDP per capita, Roma population share, and Gini are all non-significant. However, we will run our ICC calculation to check for changes.
+
+Here, we run our ICC.
+
+```{r}
+# ICC for Model 2
+m2_iccs <- sapply(m2_results$analyses, function(x) {
+  icc_obj <- performance::icc(x)
+  return(as.numeric(icc_obj[[1]]))
+})
+avg_icc_m2 <- mean(m2_iccs)
+
+round(as.numeric(icc_null[[1]]), 4) #null model
+round(avg_icc_m1, 4) #model 1
+round(avg_icc_m2, 4) #model 2 
+round((as.numeric(icc_null[[1]]) - avg_icc_m2) / as.numeric(icc_null[[1]]) * 100, 1) #% change from null
+```
+
+The ICC still decreases from 11.2% in model 1 to around 8%. Now, we know that the between-country variance is being explained by the collective pattern of these variables rather than any single one dominating.
+
+Given our limited number of Level 2 observations (29 countries), we suspect that a reduced model with only the most significant variable, post-communist, can explain this variation between countries alone.
+
+```{r}
+m2_reduced <- with(imputed_data,
+                   lmer(roma_comfort ~ 
+                          age + female + edu_cat + politics +
+                          urbanization + hardship + roma_contact +
+                          post_communist +
+                          (1 | isocntry)))
+pooled_m2r <- pool(m2_reduced)
+summary(pooled_m2r, conf.int = TRUE)
+```
+
+With all other country level variables removed, we see the post-communist effect is strongly significant (β = -1.16, p \< 0.001). This suggests that the historical and institutional legacy of communism is the primary structural driver of cross-national attitudinal differences in our level 2 model.
+
+Now we can compare the variance components across all these models to see how much country-level variance is explained at each stage.
+
+```{r}
+m2r_iccs <- sapply(m2_reduced$analyses, function(x) {
+  as.numeric(performance::icc(x)[[1]])
+})
+avg_icc_m2r <- mean(m2r_iccs)
+
+round(as.numeric(icc_null[[1]]), 4)
+round(avg_icc_m1, 4)
+round(avg_icc_m2, 4)
+round(avg_icc_m2r, 4)
+```
+
+We can see that with the reduced model 2, the ICC dropped even further, to 8.11%. This confirms that our post-communist variable alone does nearly all the explanatory work and the other three variables were redundant.
+
+#### Predicted Effects for Country-Level Variables
+
+To better visualize, here is a plot showing the predicted effects of our post-communist variable on attitudes.
+
+```{r}
+# Post-communist effect (factor, not standardized)
+plot(ggpredict(m2_reduced$analyses[[1]], "post_communist")) +
+  labs(title = "Predicted Comfort by Post-Communist Legacy",
+       y = "Comfort Scale (1-10)")
+```
+
+## Model 3: Random Slope Test and Cross-Level Interaction
+
+Before testing cross-level interactions, we first check whether the effect of our strongest individual predictor (Roma contact) actually varies across countries. First, we compare a random-intercept model with a random-slope model using a likelihood ratio test.
+
+#### Random Slope Test
+
+```{r}
+# first imputed dataset for the random slope test
+d1 <- complete(imputed_data, 1)
+
+# Random intercept only (same as Model 2 but with ML for comparison)
+m2_ri <- lmer(roma_comfort ~ 
+                age + female + edu_cat + politics +
+                urbanization + hardship + roma_contact +
+                post_communist + gdp_per_capita_z + roma_pct_z + gini_z +
+                (1 | isocntry),
+              data = d1, REML = FALSE)
+
+# Random slope: allow roma_contact effect to vary by country
+m2_rs <- lmer(roma_comfort ~ 
+                age + female + edu_cat + politics +
+                urbanization + hardship + roma_contact +
+                post_communist + gdp_per_capita_z + roma_pct_z + gini_z +
+                (1 + roma_contact | isocntry),
+              data = d1, REML = FALSE)
+
+# Likelihood ratio test
+anova(m2_ri, m2_rs)
+```
+
+The random slope test is significant, which means the contact effect differs across countries. This justifies testing a cross-level interaction to explain why.
+
+```{r}
+# inspect the random slope variance and correlation
+tidy(m2_rs) |> filter(effect == "ran_pars")
+
+# visualize: country-specific roma_contact effects
+country_slopes <- ranef(m2_rs)$isocntry |>
+  as_tibble(rownames = "country") |>
+  mutate(
+    contact_slope = fixef(m2_rs)["roma_contact"] + roma_contact
+  ) |>
+  arrange(contact_slope)
+
+ggplot(country_slopes, aes(x = reorder(country, contact_slope), y = contact_slope)) +
+  geom_point() +
+  geom_hline(yintercept = fixef(m2_rs)["roma_contact"], 
+             linetype = "dashed", color = "grey50") +
+  coord_flip() +
+  labs(title = "Country-Specific Effect of Roma Contact on Comfort",
+       subtitle = "Dashed line = average effect across all countries",
+       x = NULL, y = "Roma Contact Coefficient") +
+  theme_minimal()
+```
+
+#### Cross-Level Interaction: Roma Contact x Roma Population Share
+
+Finally, we check if the effect of having Roma friends depend on a countries post-communist status. Theoretically, in post-communist countries where anti-Roma prejudice could be more present, having a personal contact with a Roma people might have a larger effect.
+
+```{r}
+# Model 3: cross-level interaction
+m3_results <- with(imputed_data,
+                   lmer(roma_comfort ~ 
+                          age + female + edu_cat + politics +
+                          urbanization + hardship + roma_contact +
+                          post_communist +
+                          roma_contact:post_communist +
+                          (1 | isocntry)))
+
+pooled_m3 <- pool(m3_results)
+summary(pooled_m3, conf.int = TRUE)
+```
+
+Here, we see that in non-post communist countries, having Roma friends increases comfort by about 1 point. In post-communist countries, contact has nearly double the effect (+1.73 points). The post-communist main effect also got stronger (-1.31 vs -1.16 in the reduced Model 2). This is the effect for people without Roma contact. Essentially, a person in a post-communist country who has no Roma friends scores 1.31 points lower than an equivalent person in a western european nation. However, a person in a post-communist country who does have Roma friends scores about 0.63 points lower than the western equivalent, which closes half the original gap. This suggests that intergroup contact is especially powerful in contexts where prejudice is most prevalent, and that policies promoting Roma integration and everyday contact could be particularly effective in Eastern European countries.
+
+#### Model 3 ICC
+
+Now, we will check the ICC.
+
+```{r}
+m3_iccs <- sapply(m3_results$analyses, function(x) {
+  icc_obj <- performance::icc(x)
+  return(as.numeric(icc_obj[[1]]))
+})
+avg_icc_m3 <- mean(m3_iccs)
+
+round(as.numeric(icc_null[[1]]), 4)
+round(avg_icc_m1, 4)
+round(avg_icc_m2, 4)
+round(avg_icc_m3, 4)
+```
+
+The ICC for Model 3 is 8.25%, essentially the same as model 2. This is expected, and reveals that the value of Model 3 is in showing that Roma contact is nearly twice as effective in post-communist countries (+1.73) compared to non-post-communist countries (+1.05).
+
+#### Visualizing the Cross-Level Interaction
+
+```{r}
+pred_interaction <- ggpredict(m3_results$analyses[[1]], 
+                               terms = c("roma_contact", "post_communist"))
+
+ggplot(pred_interaction, aes(x = factor(x, labels = c("No Contact", "Contact")), 
+                              y = predicted, color = group)) +
+  geom_point(size = 4, position = position_dodge(0.3)) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), 
+                width = 0.15, position = position_dodge(0.3)) +
+  geom_line(aes(group = group), position = position_dodge(0.3), linewidth = 1) +
+  scale_color_manual(values = c("#4575b4", "#d73027"),
+                     labels = c("Western European Nations", "Post-Communist Nations")) +
+  labs(title = "Effect of Roma Contact on Comfort by Post-Communist Legacy",
+       subtitle = "Cross-level interaction: roma_contact x post_communist",
+       y = "Predicted Comfort (1-10)",
+       x = "Has Roma Friends/Acquaintances",
+       color = "Country Type") +
+  theme_minimal()
+```
+
+## Final Model Comparison
+
+Here we compare all models side by side.
+
+```{r}
+tab_model(null_model, 
+          m1_results$analyses[[1]], 
+          m2_reduced$analyses[[1]],
+          m3_results$analyses[[1]],
+          show.icc = TRUE,
+          show.re.var = TRUE,
+          show.ngroups = TRUE,
+          dv.labels = c("Null", "M1: Individual", "M2: Country", "M3: Interaction"),
+          title = "Progressive Multilevel Models: Comfort with Roma Colleague",
+          file = "model_comparison.html")
+```
+
+#### Variance Reduction Summary
+
+```{r}
+null_var <- as.data.frame(VarCorr(null_model))$vcov[1]
+m1_var <- mean(sapply(m1_results$analyses, function(x) as.data.frame(VarCorr(x))$vcov[1]))
+m2_var <- mean(sapply(m2_reduced$analyses, function(x) as.data.frame(VarCorr(x))$vcov[1]))
+m3_var <- mean(sapply(m3_results$analyses, function(x) as.data.frame(VarCorr(x))$vcov[1]))
+
+variance_summary <- tibble(
+  Model = c("Null", "Model 1 (Individual)", "Model 2 (Country)", "Model 3 (Interaction)"),
+  Country_Variance = c(null_var, m1_var, m2_var, m3_var),
+  Residual_Variance = c(
+    as.data.frame(VarCorr(null_model))$vcov[2],
+    mean(sapply(m1_results$analyses, function(x) as.data.frame(VarCorr(x))$vcov[2])),
+    mean(sapply(m2_results$analyses, function(x) as.data.frame(VarCorr(x))$vcov[2])),
+    mean(sapply(m3_results$analyses, function(x) as.data.frame(VarCorr(x))$vcov[2]))
+  ),
+  ICC = c(as.numeric(icc_null[[1]]), avg_icc_m1, avg_icc_m2, avg_icc_m3),
+  Country_Var_Reduction = c(0, 
+                             (1 - m1_var/null_var) * 100,
+                             (1 - m2_var/null_var) * 100,
+                             (1 - m3_var/null_var) * 100)
+)
+
+variance_summary |>
+  mutate(across(where(is.numeric), ~round(., 3))) |>
+  print()
+```
+
+This table tells the full story of the previous analysis, including how much of the between-country variance each model stage explains, and whether the cross-level interaction adds meaningful explanatory power beyond the main effects.
+
+#### Save Final Data
+
+Readers can run this chunk to save the final data.
+
+```{r}
+#write_csv(data_full, "data_full_merged.csv")
+```

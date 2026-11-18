@@ -1,0 +1,224 @@
+---
+title: "Country_level_indicators_V7_20260311"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(here)
+```
+
+## Country-level indicators
+
+### Datasets
+
+```{r my-datasets}
+Post_communist <- tibble::tribble(
+  ~Country_code, ~Post_communist,
+  "BE", 0, "DK", 0, "GR", 0, "ES", 0, "FI", 0, 
+  "FR", 0, "IE", 0, "IT", 0, "LU", 0, "NL", 0, 
+  "AT", 0, "PT", 0, "SE", 0, "GB", 0, "CY", 0, 
+  "MT", 0, "DE", NA, "DE-W", 0, "BG", 1, "CZ", 1, 
+  "EE", 1, "HU", 1, "LV", 1, "LT", 1, "PL", 1, 
+  "RO", 1, "SK", 1, "SI", 1, "HR", 1, "DE-E", 1
+)
+
+Post_communist
+
+#-----------------------------------------------------------------------------------------------------------------
+
+Pop_Eurostat <- read_csv(here("data", "raw", "Population_2019_Eurostat.csv"))
+
+Pop_Eurostat
+
+
+#-----------------------------------------------------------------------------------------------------------------
+
+GDP_Eurostat <- read_csv(here("data", "raw", "GDP_2019_Eurostat.csv")) |>
+  filter(TIME_PERIOD == 2019) |>
+  select(
+    Country_code = geo,
+    GDP_MEUR = OBS_VALUE
+  ) |>
+  mutate(
+    Country_code = case_when(
+      Country_code == "EL" ~ "GR",
+      Country_code == "UK" ~ "GB",
+      TRUE ~ Country_code
+    )
+  )
+
+GDP_Eurostat
+
+#-----------------------------------------------------------------------------------------------------------------
+
+Roma_population <- read_excel(here("data", "raw", "Estimates_and_official_numbers_of_Roma_in_Europe updated July 2012.xls"), range = "A3:H55")|>
+  select(Country_name =Country, Roma_prct_pop= "Average estimate as a") |> 
+  drop_na() |> 
+  mutate(
+    Country_name = case_when(
+      Country_name == "Czech Republic" ~ "Czechia",
+      Country_name == "Slovak Republic" ~ "Slovakia",
+      Country_name == "the Netherlands" ~ "Netherlands",
+      TRUE ~ Country_name
+    )) |> 
+  mutate(
+    Roma_prct_pop = round(as.numeric(Roma_prct_pop) * 100, 2)
+  )
+
+
+Roma_population
+
+
+#-----------------------------------------------------------------------------------------------------------------
+
+Gini_Eurostat <- read_csv(here("data", "raw", "Gini_Eurostat.csv")) |>
+  filter(TIME_PERIOD == 2019) |>
+  select(
+    Country_name = geo,
+    Gini_coef = OBS_VALUE
+  )
+
+Gini_Eurostat
+
+
+#-----------------------------------------------------------------------------------------------------------------
+
+PISA <- read_csv(here("data", "raw", "academic-performance.csv")) |>
+  filter(
+    (Year == 2018) |
+    (Entity == "Spain" & Year == 2015)
+  ) |>
+  select(
+    Country_name = Entity,
+    PISA_reading = Reading
+  ) |>
+  mutate(
+    Country_name = case_when(
+      Country_name == "Czech Republic" ~ "Czechia",
+      Country_name == "Slovak Republic" ~ "Slovakia",
+      TRUE ~ Country_name
+    )
+  )
+
+# duplicar Alemania para West/East Germany
+germany_pisa <- PISA |> filter(Country_name == "Germany")
+
+PISA <- bind_rows(
+  PISA,
+  germany_pisa |> mutate(Country_name = "West Germany"),
+  germany_pisa |> mutate(Country_name = "East Germany")
+)
+
+PISA
+```
+
+### Country_mapping
+
+```{r}
+EU_countries <- tibble::tribble(
+  ~Country_code, ~Country_name,
+  "BE", "Belgium", "DK", "Denmark", "GR", "Greece", 
+  "ES", "Spain", "FI", "Finland", "FR", "France", 
+  "IE", "Ireland", "IT", "Italy", "LU", "Luxembourg", 
+  "NL", "Netherlands", "AT", "Austria", "PT", "Portugal", 
+  "SE", "Sweden", "GB", "United Kingdom", "BG", "Bulgaria", 
+  "CY", "Cyprus", "CZ", "Czechia", "EE", "Estonia", 
+  "HU", "Hungary", "LV", "Latvia", "LT", "Lithuania", 
+  "MT", "Malta", "PL", "Poland", "RO", "Romania", 
+  "SK", "Slovakia", "SI", "Slovenia", "HR", "Croatia", 
+  "DE", "Germany", "DE-W", "West Germany", "DE-E", "East Germany"
+)
+```
+
+### Join datasets
+
+```{r}
+Country_indicators_tb <- EU_countries |>
+  left_join(Post_communist, by = "Country_code") |> 
+  left_join(Pop_Eurostat, by = "Country_name") |>
+  left_join(GDP_Eurostat, by = "Country_code") |>
+  left_join(Roma_population, by = "Country_name") |> 
+  left_join(Gini_Eurostat, by = "Country_name") |>
+  left_join(PISA, by = "Country_name")
+
+Country_indicators_tb
+
+setdiff(EU_countries$Country_name, PISA$Country_name)
+```
+
+```{r my-granular_germany_pop}
+
+# https://www-genesis.destatis.de/datenbank/online/statistic/12411/table/12411-0010
+
+west_states <- c("Schleswig-Holstein", "Hamburg", "Bremen", "Niedersachsen", 
+                 "Nordrhein-Westfalen", "Hessen", "Rheinland-Pfalz", 
+                 "Saarland", "Baden-Württemberg", "Bayern")
+
+east_states <- c("Mecklenburg-Vorpommern", "Brandenburg", "Berlin", 
+                 "Sachsen-Anhalt", "Sachsen", "Thüringen")
+
+
+Population_federated_states <- read_csv2(file = here("data", "raw", "Population_federated_states.csv")) |> 
+  # Filter for the end-of-year 2018 population because the eurostat data was january first 2019
+  filter(time == "2018-12-31") |> 
+  select(State = "1_variable_attribute_label", Population = "value") |> 
+  # Classify into West (DE-W) and East (DE-E)
+  mutate(Country_code = case_when(
+    State %in% west_states ~ "DE-W",
+    State %in% east_states ~ "DE-E",
+    TRUE ~ NA_character_
+  )) |> 
+  # Aggregate population by the new historical regions
+  group_by(Country_code) |> 
+  summarize(Population = sum(Population, na.rm = TRUE))
+
+Country_indicators_tb <- 
+  Country_indicators_tb |> 
+  left_join(Population_federated_states, by = "Country_code") |>
+  # Merge the new German populations into the primary Population column:
+  mutate(Population = coalesce(Population.x, Population.y)) |>
+  select(-Population.x, -Population.y)
+```
+
+### Add Roma population
+
+```{r}
+Country_indicators_tb <- Country_indicators_tb |> 
+  mutate(Roma_population = 
+           round(Population*Roma_prct_pop/100), .after =Population)
+
+Country_indicators_tb
+```
+
+### Add GDP percap
+
+```{r}
+Country_indicators_tb <- Country_indicators_tb |>
+  mutate(
+    GDP_per_capita = round((GDP_MEUR * 1000000) / Population, 0)
+  )
+
+Country_indicators_tb
+```
+
+```{r}
+Country_indicators_tb <- Country_indicators_tb |>
+  mutate(
+    Gini_coef = ifelse(
+      Country_name == "United Kingdom",
+      33.5,
+      Gini_coef
+    )
+  )
+```
+
+```{r}
+write_csv(Country_indicators_tb, file = here("data", "processed", "Country_indicators_tb.csv"))
+```
+
+```{r}
+
+```
